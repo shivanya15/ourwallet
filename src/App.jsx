@@ -475,12 +475,11 @@ function ImportPDF({ expenses, onSave, currentUser, onDone }) {
     setProgress("Reading your statement…");
 
     try {
-      const base64 = await new Promise((res, rej) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result.split(",")[1]);
-        reader.onerror = () => rej(new Error("Failed to read file"));
-        reader.readAsDataURL(file);
-      });
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = "";
+      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+      const base64 = btoa(binary);
 
       setProgress("Claude is analysing the statement…");
 
