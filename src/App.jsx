@@ -492,23 +492,13 @@ function ImportPDF({ expenses, onSave, currentUser, onDone }) {
     // Step 2 — call Claude API
     let data;
     try {
-      setProgress("Step 2/3: Calling Claude API…");
+      setProgress("Step 2/3: Calling Gemini API…");
       const response = await fetch("/api/parse-statement", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 4000,
-          messages: [{
-            role: "user",
-            content: [
-              {
-                type: "document",
-                source: { type: "base64", media_type: "application/pdf", data: base64 }
-              },
-              {
-                type: "text",
-                text: `Parse this credit card or bank statement. Extract ALL debit/purchase transactions. Skip payments, credits, and refunds.
+          pdfBase64: base64,
+          prompt: `Parse this credit card or bank statement. Extract ALL debit/purchase transactions. Skip payments, credits, and refunds.
 
 Return a JSON array only. Each item must have:
 - date: "YYYY-MM-DD"
@@ -517,9 +507,6 @@ Return a JSON array only. Each item must have:
 - category: one of exactly: "🍽️ Food", "🏠 Rent", "🚗 Transport", "🛒 Groceries", "💊 Health", "🎉 Fun", "🧾 Bills", "✈️ Travel", "🛍️ Shopping", "📦 Other"
 
 Return ONLY valid JSON array. No markdown, no backticks, no explanation. If no transactions: []`
-              }
-            ]
-          }]
         })
       });
 
@@ -536,12 +523,12 @@ Return ONLY valid JSON array. No markdown, no backticks, no explanation. If no t
       data = await response.json();
 
       if (data.error) {
-        setError(`Claude error: ${data.error.message}`);
+        setError(`Gemini error: ${data.error.message}`);
         setStage("upload");
         return;
       }
     } catch (err) {
-      setError(`API call failed: ${err.message}. This may be a CORS issue — make sure you are on the deployed Vercel app, not localhost.`);
+      setError(`API call failed: ${err.message}. Make sure you are on the deployed Vercel app, not localhost.`);
       setStage("upload");
       return;
     }
@@ -549,7 +536,7 @@ Return ONLY valid JSON array. No markdown, no backticks, no explanation. If no t
     // Step 3 — parse response
     try {
       setProgress("Step 3/3: Parsing transactions…");
-      const rawText = data.content?.find(b => b.type === "text")?.text || "[]";
+      const rawText = data.text || "[]";
       const clean = rawText.replace(/```json|```/g, "").trim();
       let items;
       try {
