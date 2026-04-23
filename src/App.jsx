@@ -493,7 +493,7 @@ function ImportPDF({ expenses, onSave, currentUser, onDone }) {
     let data;
     try {
       setProgress("Step 2/3: Calling Claude API…");
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch("/api/parse-statement", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
