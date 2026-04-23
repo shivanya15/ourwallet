@@ -472,17 +472,27 @@ function ImportPDF({ expenses, onSave, currentUser, onDone }) {
     setFileName(file.name);
     setError("");
     setStage("parsing");
-    setProgress("Reading your statement…");
 
+    // Step 1 — read file
+    let base64;
     try {
+      setProgress("Step 1/3: Reading file…");
       const arrayBuffer = await file.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
       let binary = "";
       for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-      const base64 = btoa(binary);
+      base64 = btoa(binary);
+      setProgress(`Step 1/3: File read ✓ (${(bytes.byteLength / 1024).toFixed(0)} KB)`);
+    } catch (err) {
+      setError(`File read failed: ${err.message}`);
+      setStage("upload");
+      return;
+    }
 
-      setProgress("Claude is analysing the statement…");
-
+    // Step 2 — call Claude API
+    let data;
+    try {
+      setProgress("Step 2/3: Calling Claude API…");
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -513,38 +523,52 @@ Return ONLY valid JSON array. No markdown, no backticks, no explanation. If no t
         })
       });
 
+      setProgress(`Step 2/3: API responded (status ${response.status})`);
+
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData?.error?.message || `API error ${response.status}`);
+        const msg = errData?.error?.message || `HTTP ${response.status}`;
+        setError(`API error: ${msg}`);
+        setStage("upload");
+        return;
       }
 
-      const data = await response.json();
-      if (data.error) throw new Error(data.error.message);
+      data = await response.json();
 
-      setProgress("Processing results…");
+      if (data.error) {
+        setError(`Claude error: ${data.error.message}`);
+        setStage("upload");
+        return;
+      }
+    } catch (err) {
+      setError(`API call failed: ${err.message}. This may be a CORS issue — make sure you are on the deployed Vercel app, not localhost.`);
+      setStage("upload");
+      return;
+    }
+
+    // Step 3 — parse response
+    try {
+      setProgress("Step 3/3: Parsing transactions…");
       const rawText = data.content?.find(b => b.type === "text")?.text || "[]";
       const clean = rawText.replace(/```json|```/g, "").trim();
-
       let items;
       try {
         items = JSON.parse(clean);
-      } catch (parseErr) {
-        // Try to extract JSON array from text
+      } catch (_) {
         const match = clean.match(/\[[\s\S]*\]/);
         if (match) items = JSON.parse(match[0]);
-        else throw new Error("Could not parse transactions from response");
+        else throw new Error(`Could not parse JSON. Raw response: ${clean.slice(0, 200)}`);
       }
 
       if (!Array.isArray(items) || items.length === 0) {
-        setError("No transactions found. Make sure this is a credit card or bank statement PDF.");
+        setError("No transactions found in this PDF. Make sure it's a bank or credit card statement.");
         setStage("upload");
         return;
       }
 
       loadTransactions(items, file.name);
     } catch (err) {
-      console.error("PDF parse error:", err);
-      setError(`Could not parse PDF: ${err.message}. Please try again or use the preloaded statement.`);
+      setError(`Parse error: ${err.message}`);
       setStage("upload");
     }
   };
