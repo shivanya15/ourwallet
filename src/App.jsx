@@ -92,6 +92,7 @@ export default function App() {
       {tab === "import" && <ImportPDF expenses={expenses} onSave={saveExpenses} currentUser={currentUser} onDone={() => setTab("dashboard")} />}
       {tab === "history" && <History expenses={expenses} onDelete={(id) => saveExpenses(expenses.filter(e => e.id !== id))} />}
       {tab === "summary" && <Summary expenses={expenses} />}
+      {tab === "export" && <ExportExcel expenses={expenses} />}
     </Shell>
   );
 }
@@ -139,6 +140,7 @@ function Shell({ children, user, onLogout, tab, setTab, saveStatus }) {
     { id: "import", icon: "⬆", label: "Import" },
     { id: "history", icon: "≡", label: "History" },
     { id: "summary", icon: "⇄", label: "Owes" },
+    { id: "export", icon: "↓", label: "Export" },
   ];
   return (
     <div style={styles.shell}>
@@ -958,6 +960,207 @@ function Summary({ expenses }) {
   );
 }
 
+// ─── Export Excel ─────────────────────────────────────────────────────────────
+function ExportExcel({ expenses }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const firstDate = expenses.length
+    ? [...expenses].sort((a, b) => a.date.localeCompare(b.date))[0].date.slice(0, 10)
+    : today;
+
+  const [from, setFrom] = useState(firstDate);
+  const [to, setTo] = useState(today);
+  const [downloading, setDownloading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const filtered = expenses.filter(e => {
+    const d = e.date.slice(0, 10);
+    return d >= from && d <= to;
+  });
+
+  const { paidA, paidB, owesA, owesB, netA } = calcOwed(filtered);
+  const total = filtered.reduce((s, e) => s + parseFloat(e.amount), 0);
+
+  const generateCSV = () => {
+    // Header
+    const rows = [
+      ["OurWallet Export"],
+      [`Period: ${from} to ${to}`],
+      [`Generated: ${new Date().toLocaleDateString("en-IN")}`],
+      [],
+      ["Date", "Description", "Category", "Amount (₹)", "Paid By", `${USERS.A} Share (₹)`, `${USERS.B} Share (₹)`, "Split"],
+    ];
+
+    // Transactions sorted by date
+    [...filtered]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .forEach(e => {
+        const amt = parseFloat(e.amount);
+        rows.push([
+          new Date(e.date).toLocaleDateString("en-IN"),
+          e.description,
+          e.category,
+          amt.toFixed(2),
+          USERS[e.payer],
+          (amt * e.splitA / 100).toFixed(2),
+          (amt * e.splitB / 100).toFixed(2),
+          `${e.splitA}/${e.splitB}`,
+        ]);
+      });
+
+    // Summary section
+    rows.push([]);
+    rows.push(["SUMMARY"]);
+    rows.push(["Total Spending", "", "", total.toFixed(2)]);
+    rows.push([`${USERS.A} Paid`, "", "", paidA.toFixed(2)]);
+    rows.push([`${USERS.B} Paid`, "", "", paidB.toFixed(2)]);
+    rows.push([`${USERS.A}'s Share`, "", "", owesA.toFixed(2)]);
+    rows.push([`${USERS.B}'s Share`, "", "", owesB.toFixed(2)]);
+    rows.push([]);
+    if (Math.abs(netA) < 0.01) {
+      rows.push(["Balance", "All settled ✓"]);
+    } else if (netA > 0) {
+      rows.push(["Balance", `${USERS.B} owes ${USERS.A}`, "", Math.abs(netA).toFixed(2)]);
+    } else {
+      rows.push(["Balance", `${USERS.A} owes ${USERS.B}`, "", Math.abs(netA).toFixed(2)]);
+    }
+
+    // Category breakdown
+    rows.push([]);
+    rows.push(["CATEGORY BREAKDOWN"]);
+    rows.push(["Category", "Total (₹)", `${USERS.A} Share (₹)`, `${USERS.B} Share (₹)`]);
+    const byCat = {};
+    filtered.forEach(e => {
+      const cat = e.category || "📦 Other";
+      if (!byCat[cat]) byCat[cat] = { total: 0, a: 0, b: 0 };
+      const amt = parseFloat(e.amount);
+      byCat[cat].total += amt;
+      byCat[cat].a += (e.splitA / 100) * amt;
+      byCat[cat].b += (e.splitB / 100) * amt;
+    });
+    Object.entries(byCat)
+      .sort((x, y) => y[1].total - x[1].total)
+      .forEach(([cat, v]) => {
+        rows.push([cat, v.total.toFixed(2), v.a.toFixed(2), v.b.toFixed(2)]);
+      });
+
+    return rows;
+  };
+
+  const downloadCSV = () => {
+    setDownloading(true);
+    try {
+      const rows = generateCSV();
+      const csv = rows.map(r =>
+        r.map(cell => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")
+      ).join("\n");
+
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" }); // BOM for Excel
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `OurWallet_${from}_to_${to}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setDone(true);
+      setTimeout(() => setDone(false), 3000);
+    } catch (err) {
+      console.error(err);
+    }
+    setDownloading(false);
+  };
+
+  return (
+    <div style={styles.page}>
+      <h2 style={styles.pageTitle}>Export to Excel</h2>
+      <p style={{ fontFamily: "system-ui", fontSize: 13, color: C.muted, lineHeight: 1.6, marginBottom: 20 }}>
+        Download a CSV file that opens directly in Excel or Google Sheets, with all transactions and a summary.
+      </p>
+
+      {/* Date range */}
+      <div style={styles.exportDateCard}>
+        <p style={styles.sectionTitle}>Select date range</p>
+        <div style={styles.exportDateRow}>
+          <div style={{ flex: 1 }}>
+            <label style={styles.label}>From</label>
+            <input style={styles.input} type="date" value={from}
+              max={to} onChange={e => setFrom(e.target.value)} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={styles.label}>To</label>
+            <input style={styles.input} type="date" value={to}
+              min={from} max={today} onChange={e => setTo(e.target.value)} />
+          </div>
+        </div>
+
+        {/* Quick range presets */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+          {[
+            { label: "This month", fn: () => { const n = new Date(); setFrom(`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-01`); setTo(today); } },
+            { label: "Last month", fn: () => { const n = new Date(); n.setMonth(n.getMonth()-1); const y = n.getFullYear(); const m = String(n.getMonth()+1).padStart(2,"0"); const last = new Date(y, n.getMonth()+1, 0).getDate(); setFrom(`${y}-${m}-01`); setTo(`${y}-${m}-${last}`); } },
+            { label: "Last 3 months", fn: () => { const n = new Date(); n.setMonth(n.getMonth()-3); setFrom(n.toISOString().slice(0,10)); setTo(today); } },
+            { label: "This year", fn: () => { setFrom(`${new Date().getFullYear()}-01-01`); setTo(today); } },
+            { label: "All time", fn: () => { setFrom(firstDate); setTo(today); } },
+          ].map(p => (
+            <button key={p.label} style={styles.presetChip} onClick={p.fn}>{p.label}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Preview */}
+      <div style={styles.exportPreview}>
+        <p style={styles.sectionTitle}>Preview</p>
+        {filtered.length === 0 ? (
+          <p style={{ fontFamily: "system-ui", fontSize: 13, color: C.muted, textAlign: "center", padding: "20px 0" }}>
+            No expenses in this date range
+          </p>
+        ) : (
+          <>
+            <div style={styles.exportStatRow}>
+              <div style={styles.exportStat}>
+                <p style={styles.exportStatLabel}>Transactions</p>
+                <p style={styles.exportStatVal}>{filtered.length}</p>
+              </div>
+              <div style={styles.exportStat}>
+                <p style={styles.exportStatLabel}>Total</p>
+                <p style={styles.exportStatVal}>{fmt(total)}</p>
+              </div>
+              <div style={styles.exportStat}>
+                <p style={styles.exportStatLabel}>{USERS.A} paid</p>
+                <p style={styles.exportStatVal}>{fmt(paidA)}</p>
+              </div>
+              <div style={styles.exportStat}>
+                <p style={styles.exportStatLabel}>{USERS.B} paid</p>
+                <p style={styles.exportStatVal}>{fmt(paidB)}</p>
+              </div>
+            </div>
+            <div style={styles.exportBalanceRow}>
+              <span style={{ fontFamily: "system-ui", fontSize: 13, color: C.muted }}>Balance</span>
+              <span style={{ fontFamily: "'Georgia', serif", fontSize: 14, fontWeight: 700, color: Math.abs(netA) < 0.01 ? C.sage : C.terra }}>
+                {Math.abs(netA) < 0.01 ? "Settled ✓" : netA > 0 ? `${USERS.B} owes ${fmt(netA)}` : `${USERS.A} owes ${fmt(Math.abs(netA))}`}
+              </span>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* What's included */}
+      <div style={styles.infoBox}>
+        <p style={styles.infoTitle}>📋 What's in the file</p>
+        <p style={styles.infoText}>All transactions with date, description, category, amount, who paid, each person's share — plus a summary sheet with category breakdown and balance. Opens in Excel, Numbers, and Google Sheets.</p>
+      </div>
+
+      <button
+        style={{ ...styles.submitBtn, opacity: filtered.length === 0 || downloading ? 0.5 : 1, marginTop: 16 }}
+        onClick={downloadCSV}
+        disabled={filtered.length === 0 || downloading}>
+        {downloading ? "Preparing…" : done ? "✓ Downloaded!" : `Download ${filtered.length} Expense${filtered.length !== 1 ? "s" : ""}`}
+      </button>
+    </div>
+  );
+}
+
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const C = {
   cream: "#fdf6ee", warm: "#f5e8d6",
@@ -1115,4 +1318,14 @@ const styles = {
   editCatBtnActive: { borderColor: C.terra, background: C.terra, color: "#fff" },
   editDoneBtn: { width: "100%", padding: "9px", borderRadius: 10, background: C.teraDark, color: "#fff", border: "none", fontFamily: "system-ui", fontSize: 13, fontWeight: 700, cursor: "pointer", marginTop: 4 },
   editSplitInput: { width: "100%", padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.card, fontFamily: "'Georgia', serif", fontSize: 18, fontWeight: 700, color: C.ink, boxSizing: "border-box", textAlign: "center", outline: "none" },
+  // Export
+  exportDateCard: { background: C.warm, border: `1px solid ${C.border}`, borderRadius: 14, padding: "16px", marginBottom: 16 },
+  exportDateRow: { display: "flex", gap: 12 },
+  presetChip: { padding: "5px 12px", borderRadius: 16, border: `1.5px solid ${C.border}`, background: C.card, fontFamily: "system-ui", fontSize: 11, fontWeight: 600, color: C.muted, cursor: "pointer" },
+  exportPreview: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: "16px", marginBottom: 16 },
+  exportStatRow: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 12 },
+  exportStat: { textAlign: "center" },
+  exportStatLabel: { fontFamily: "system-ui", fontSize: 10, color: C.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 4px" },
+  exportStatVal: { fontFamily: "'Georgia', serif", fontSize: 14, color: C.ink, fontWeight: 700, margin: 0 },
+  exportBalanceRow: { display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid ${C.border}`, paddingTop: 10 },
 };
