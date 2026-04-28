@@ -416,12 +416,33 @@ function AddExpense({ expenses, onSave, currentUser, onDone }) {
 }
 
 // ─── Import PDF ───────────────────────────────────────────────────────────────
-// Pre-parsed transactions from the Axis Bank statement uploaded by user
-const PRELOADED_TRANSACTIONS = [
-  { date: "2026-03-28", description: "Ola Cabs", amount: 300.00, category: "🚗 Transport" },
-  { date: "2026-03-28", description: "Ola Cabs", amount: 356.00, category: "🚗 Transport" },
-  { date: "2026-03-29", description: "Infiniti Retail (Croma)", amount: 23949.00, category: "🛍️ Shopping" },
-  { date: "2026-04-14", description: "Netflix", amount: 499.00, category: "🎉 Fun" },
+// Pre-parsed transactions from statements uploaded by user
+const PRELOADED_STATEMENTS = [
+  {
+    key: "axis_apr26",
+    label: "Axis Bank Magnus · Mar–Apr 2026",
+    file: "Credit_Card_Statement_Apr26.pdf",
+    transactions: [
+      { date: "2026-03-28", description: "Ola Cabs", amount: 300.00, category: "🚗 Transport" },
+      { date: "2026-03-28", description: "Ola Cabs", amount: 356.00, category: "🚗 Transport" },
+      { date: "2026-03-29", description: "Infiniti Retail (Croma)", amount: 23949.00, category: "🛍️ Shopping" },
+      { date: "2026-04-14", description: "Netflix", amount: 499.00, category: "🎉 Fun" },
+    ]
+  },
+  {
+    key: "icici_apr26",
+    label: "ICICI Amazon Pay · Mar–Apr 2026",
+    file: "ICICI_statement.pdf",
+    transactions: [
+      { date: "2026-03-15", description: "Amazon Pay", amount: 1235.00, category: "🛍️ Shopping" },
+      { date: "2026-03-18", description: "Amazon Grocery", amount: 1489.72, category: "🛒 Groceries" },
+      { date: "2026-03-25", description: "Amazon Pay", amount: 860.00, category: "🛍️ Shopping" },
+      { date: "2026-03-28", description: "Amazon E-Commerce", amount: 434.00, category: "🛍️ Shopping" },
+      { date: "2026-03-29", description: "Amazon Pay", amount: 860.00, category: "🛍️ Shopping" },
+      { date: "2026-04-01", description: "Amazon India", amount: 361.00, category: "🛍️ Shopping" },
+      { date: "2026-04-03", description: "Amazon Grocery", amount: 838.50, category: "🛒 Groceries" },
+    ]
+  },
 ];
 
 function ImportPDF({ expenses, onSave, currentUser, onDone }) {
@@ -459,13 +480,15 @@ function ImportPDF({ expenses, onSave, currentUser, onDone }) {
     setEditedItems(prev => prev.map((it, idx) => idx === i ? { ...it, [field]: value } : it));
   };
 
-  // Load the pre-parsed Axis Bank statement
-  const loadPreloaded = () => {
+  // Load a pre-parsed statement by key
+  const loadPreloaded = (key) => {
+    const stmt = PRELOADED_STATEMENTS.find(s => s.key === key);
+    if (!stmt) return;
     setStage("parsing");
-    setProgress("Loading your Axis Bank statement…");
+    setProgress(`Loading ${stmt.label}…`);
     setTimeout(() => {
-      loadTransactions(PRELOADED_TRANSACTIONS, "Credit_Card_Statement_Apr26.pdf");
-    }, 800);
+      loadTransactions(stmt.transactions, stmt.file);
+    }, 600);
   };
 
   const handleFile = async (file) => {
@@ -494,21 +517,28 @@ function ImportPDF({ expenses, onSave, currentUser, onDone }) {
     // Step 2 — call Claude API
     let data;
     try {
-      setProgress("Step 2/3: Calling Gemini API…");
+      setProgress("Step 2/3: Calling Groq API…");
       const response = await fetch("/api/parse-statement", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pdfBase64: base64,
-          prompt: `Parse this credit card or bank statement. Extract ALL debit/purchase transactions. Skip payments, credits, and refunds.
+          prompt: `You are parsing a bank or credit card statement. Extract purchase/debit transactions only.
 
-Return a JSON array only. Each item must have:
+CRITICAL RULES:
+- The amount column is ALWAYS the LAST number on each transaction line (rightmost column)
+- Indian statements often have a "Reward Points" column — IGNORE it completely
+- NEVER include reward points numbers in the amount field
+- Skip any row marked CR, credit, payment received, or refund
+- The amount is a rupee value like 1235.00 or 23949.00, NOT a small number like 24 or 74
+
+For each valid purchase transaction return:
 - date: "YYYY-MM-DD"
-- description: merchant name, clean, max 40 chars
-- amount: positive number (no currency symbol)
-- category: one of exactly: "🍽️ Food", "🏠 Rent", "🚗 Transport", "🛒 Groceries", "💊 Health", "🎉 Fun", "🧾 Bills", "✈️ Travel", "🛍️ Shopping", "📦 Other"
+- description: merchant name only, clean, max 40 chars
+- amount: the LAST/RIGHTMOST number on the line (the actual rupee amount)
+- category: one of: "🍽️ Food", "🏠 Rent", "🚗 Transport", "🛒 Groceries", "💊 Health", "🎉 Fun", "🧾 Bills", "✈️ Travel", "🛍️ Shopping", "📦 Other"
 
-Return ONLY valid JSON array. No markdown, no backticks, no explanation. If no transactions: []`
+Return ONLY a valid JSON array. No markdown, no backticks, no explanation. If no transactions: []`
         })
       });
 
@@ -525,7 +555,7 @@ Return ONLY valid JSON array. No markdown, no backticks, no explanation. If no t
       data = await response.json();
 
       if (data.error) {
-        setError(`Gemini error: ${data.error.message}`);
+        setError(`Groq error: ${data.error.message}`);
         setStage("upload");
         return;
       }
@@ -594,14 +624,17 @@ Return ONLY valid JSON array. No markdown, no backticks, no explanation. If no t
         Upload a credit card or bank statement PDF and Claude will extract all transactions automatically.
       </p>
 
-      {/* Preloaded statement shortcut */}
-      <div style={styles.preloadCard} onClick={loadPreloaded}>
-        <div style={styles.preloadLeft}>
-          <p style={styles.preloadTitle}>📋 Axis Bank Apr 2026</p>
-          <p style={styles.preloadSub}>Credit_Card_Statement_Apr26.pdf · 4 transactions</p>
+      {/* Preloaded statements */}
+      <p style={styles.sectionTitle}>Your uploaded statements</p>
+      {PRELOADED_STATEMENTS.map(stmt => (
+        <div key={stmt.key} style={styles.preloadCard} onClick={() => loadPreloaded(stmt.key)}>
+          <div style={styles.preloadLeft}>
+            <p style={styles.preloadTitle}>📋 {stmt.label}</p>
+            <p style={styles.preloadSub}>{stmt.file} · {stmt.transactions.length} transactions</p>
+          </div>
+          <span style={styles.preloadArrow}>→</span>
         </div>
-        <span style={styles.preloadArrow}>→</span>
-      </div>
+      ))}
 
       <div style={styles.dividerRow}><div style={styles.dividerLine} /><span style={styles.dividerText}>or upload new</span><div style={styles.dividerLine} /></div>
 
