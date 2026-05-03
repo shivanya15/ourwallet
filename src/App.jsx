@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const USERS = { A: "Shivanya", B: "Ashutosh" };
-const CATEGORIES = ["🍽️ Food", "🏠 Rent", "🚗 Transport", "🛒 Groceries", "💊 Health", "🎉 Fun", "🧾 Bills", "✈️ Travel", "🛍️ Shopping", "📦 Other"];
+const CATEGORIES = ["🍽️ Food", "🏠 Rent", "🚗 Transport", "🛒 Groceries", "💊 Health", "🎉 Fun", "🧾 Bills", "✈️ Travel", "🛍️ Shopping", "📈 Investments", "🏦 EMI", "👨‍👩‍👧 Bangalore - Others", "👨‍👩‍👧 Bhopal - Others", "📦 Other"];
 const SPLIT_PRESETS = [
   { label: "50 / 50", a: 50, b: 50 },
   { label: "60 / 40", a: 60, b: 40 },
@@ -536,7 +536,7 @@ For each valid purchase transaction return:
 - date: "YYYY-MM-DD"
 - description: merchant name only, clean, max 40 chars
 - amount: the LAST/RIGHTMOST number on the line (the actual rupee amount)
-- category: one of: "🍽️ Food", "🏠 Rent", "🚗 Transport", "🛒 Groceries", "💊 Health", "🎉 Fun", "🧾 Bills", "✈️ Travel", "🛍️ Shopping", "📦 Other"
+- category: one of: "🍽️ Food", "🏠 Rent", "🚗 Transport", "🛒 Groceries", "💊 Health", "🎉 Fun", "🧾 Bills", "✈️ Travel", "🛍️ Shopping", "📈 Investments", "🏦 EMI", "👨‍👩‍👧 Bangalore - Others", "👨‍👩‍👧 Bhopal - Others", "📦 Other"
 
 Return ONLY a valid JSON array. No markdown, no backticks, no explanation. If no transactions: []`
         })
