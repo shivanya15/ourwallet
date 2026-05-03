@@ -415,36 +415,6 @@ function AddExpense({ expenses, onSave, currentUser, onDone }) {
   );
 }
 
-// ─── Import PDF ───────────────────────────────────────────────────────────────
-// Pre-parsed transactions from statements uploaded by user
-const PRELOADED_STATEMENTS = [
-  {
-    key: "axis_apr26",
-    label: "Axis Bank Magnus · Mar–Apr 2026",
-    file: "Credit_Card_Statement_Apr26.pdf",
-    transactions: [
-      { date: "2026-03-28", description: "Ola Cabs", amount: 300.00, category: "🚗 Transport" },
-      { date: "2026-03-28", description: "Ola Cabs", amount: 356.00, category: "🚗 Transport" },
-      { date: "2026-03-29", description: "Infiniti Retail (Croma)", amount: 23949.00, category: "🛍️ Shopping" },
-      { date: "2026-04-14", description: "Netflix", amount: 499.00, category: "🎉 Fun" },
-    ]
-  },
-  {
-    key: "icici_apr26",
-    label: "ICICI Amazon Pay · Mar–Apr 2026",
-    file: "ICICI_statement.pdf",
-    transactions: [
-      { date: "2026-03-15", description: "Amazon Pay", amount: 1235.00, category: "🛍️ Shopping" },
-      { date: "2026-03-18", description: "Amazon Grocery", amount: 1489.72, category: "🛒 Groceries" },
-      { date: "2026-03-25", description: "Amazon Pay", amount: 860.00, category: "🛍️ Shopping" },
-      { date: "2026-03-28", description: "Amazon E-Commerce", amount: 434.00, category: "🛍️ Shopping" },
-      { date: "2026-03-29", description: "Amazon Pay", amount: 860.00, category: "🛍️ Shopping" },
-      { date: "2026-04-01", description: "Amazon India", amount: 361.00, category: "🛍️ Shopping" },
-      { date: "2026-04-03", description: "Amazon Grocery", amount: 838.50, category: "🛒 Groceries" },
-    ]
-  },
-];
-
 function ImportPDF({ expenses, onSave, currentUser, onDone }) {
   const [stage, setStage] = useState("upload");
   const [parsedItems, setParsedItems] = useState([]);
@@ -478,17 +448,6 @@ function ImportPDF({ expenses, onSave, currentUser, onDone }) {
 
   const updateItem = (i, field, value) => {
     setEditedItems(prev => prev.map((it, idx) => idx === i ? { ...it, [field]: value } : it));
-  };
-
-  // Load a pre-parsed statement by key
-  const loadPreloaded = (key) => {
-    const stmt = PRELOADED_STATEMENTS.find(s => s.key === key);
-    if (!stmt) return;
-    setStage("parsing");
-    setProgress(`Loading ${stmt.label}…`);
-    setTimeout(() => {
-      loadTransactions(stmt.transactions, stmt.file);
-    }, 600);
   };
 
   const handleFile = async (file) => {
@@ -616,27 +575,12 @@ Return ONLY a valid JSON array. No markdown, no backticks, no explanation. If no
     setStage("done");
   };
 
-  // ── Upload
   if (stage === "upload") return (
     <div style={styles.page}>
       <h2 style={styles.pageTitle}>Import Statement</h2>
       <p style={{ fontFamily: "system-ui", fontSize: 13, color: C.muted, lineHeight: 1.6, marginBottom: 20 }}>
-        Upload a credit card or bank statement PDF and Claude will extract all transactions automatically.
+        Upload a credit card or bank statement PDF and we'll extract all transactions automatically.
       </p>
-
-      {/* Preloaded statements */}
-      <p style={styles.sectionTitle}>Your uploaded statements</p>
-      {PRELOADED_STATEMENTS.map(stmt => (
-        <div key={stmt.key} style={styles.preloadCard} onClick={() => loadPreloaded(stmt.key)}>
-          <div style={styles.preloadLeft}>
-            <p style={styles.preloadTitle}>📋 {stmt.label}</p>
-            <p style={styles.preloadSub}>{stmt.file} · {stmt.transactions.length} transactions</p>
-          </div>
-          <span style={styles.preloadArrow}>→</span>
-        </div>
-      ))}
-
-      <div style={styles.dividerRow}><div style={styles.dividerLine} /><span style={styles.dividerText}>or upload new</span><div style={styles.dividerLine} /></div>
 
       <div style={styles.uploadBox}
         onClick={() => fileRef.current.click()}
@@ -650,11 +594,6 @@ Return ONLY a valid JSON array. No markdown, no backticks, no explanation. If no
       </div>
 
       {error && <div style={styles.errorBox}>⚠️ {error}</div>}
-
-      <div style={styles.infoBox}>
-        <p style={styles.infoTitle}>💡 Works with</p>
-        <p style={styles.infoText}>Axis Bank, HDFC, SBI, ICICI, Chase, Amex, Citi — any PDF bank or credit card statement with a transactions table.</p>
-      </div>
     </div>
   );
 
