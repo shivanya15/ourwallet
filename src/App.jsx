@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { db } from "./firebase";
+import { collection, doc, onSnapshot, setDoc, deleteDoc, query, orderBy } from "firebase/firestore";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const USERS = { A: "Shivanya", B: "Ashutosh" };
@@ -46,40 +48,52 @@ function calcOwed(expenses) {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(() => localStorage.getItem("ourwallet_user") || null);
   const [expenses, setExpenses] = useState([]);
   const [tab, setTab] = useState("dashboard");
   const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState("");
 
+  // Real-time listener — both devices update instantly
   useEffect(() => {
-    (async () => {
-      try {
-        const sess = await window.storage.get("couple_session");
-        if (sess) setCurrentUser(sess.value);
-        const data = await window.storage.get("couple_expenses", true);
-        if (data) setExpenses(JSON.parse(data.value));
-      } catch (_) {}
+    const q = query(collection(db, "expenses"), orderBy("date", "asc"));
+    const unsub = onSnapshot(q, (snapshot) => {
+      setExpenses(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
-    })();
+    }, () => setLoading(false));
+    return () => unsub();
   }, []);
 
   const saveExpenses = useCallback(async (updated) => {
-    setExpenses(updated);
+    // Find added/changed expenses and write them, find removed and delete them
+    const updatedIds = new Set(updated.map(e => e.id));
+    const currentIds = new Set(expenses.map(e => e.id));
     try {
-      await window.storage.set("couple_expenses", JSON.stringify(updated), true);
+      // Upsert new or changed
+      for (const e of updated) {
+        if (!currentIds.has(e.id) || JSON.stringify(expenses.find(x => x.id === e.id)) !== JSON.stringify(e)) {
+          await setDoc(doc(db, "expenses", e.id), e);
+        }
+      }
+      // Delete removed
+      for (const e of expenses) {
+        if (!updatedIds.has(e.id)) await deleteDoc(doc(db, "expenses", e.id));
+      }
       setSaveStatus("✓ Synced");
       setTimeout(() => setSaveStatus(""), 2000);
-    } catch (_) { setSaveStatus("⚠ Sync failed"); }
-  }, []);
+    } catch (err) {
+      console.error(err);
+      setSaveStatus("⚠ Sync failed");
+    }
+  }, [expenses]);
 
-  const login = async (user) => {
+  const login = (user) => {
     setCurrentUser(user);
-    try { await window.storage.set("couple_session", user); } catch (_) {}
+    localStorage.setItem("ourwallet_user", user);
   };
-  const logout = async () => {
+  const logout = () => {
     setCurrentUser(null);
-    try { await window.storage.delete("couple_session"); } catch (_) {}
+    localStorage.removeItem("ourwallet_user");
   };
 
   if (loading) return <LoadingScreen />;
