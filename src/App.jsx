@@ -90,7 +90,10 @@ export default function App() {
       {tab === "dashboard" && <Dashboard expenses={expenses} setTab={setTab} />}
       {tab === "add" && <AddExpense expenses={expenses} onSave={saveExpenses} currentUser={currentUser} onDone={() => setTab("dashboard")} />}
       {tab === "import" && <ImportPDF expenses={expenses} onSave={saveExpenses} currentUser={currentUser} onDone={() => setTab("dashboard")} />}
-      {tab === "history" && <History expenses={expenses} onDelete={(id) => saveExpenses(expenses.filter(e => e.id !== id))} />}
+      {tab === "history" && <History expenses={expenses} 
+        onDelete={(id) => saveExpenses(expenses.filter(e => e.id !== id))}
+        onEdit={(id, updated) => saveExpenses(expenses.map(e => e.id === id ? updated : e))}
+      />}
       {tab === "summary" && <Summary expenses={expenses} />}
       {tab === "export" && <ExportExcel expenses={expenses} />}
     </Shell>
@@ -275,20 +278,165 @@ function Dashboard({ expenses, setTab }) {
   );
 }
 
-function ExpenseRow({ expense: e, onDelete }) {
+function ExpenseRow({ expense: e, onDelete, onEdit }) {
+  const [expanded, setExpanded] = useState(false);
+  const [form, setForm] = useState({
+    description: e.description,
+    amount: e.amount,
+    category: e.category,
+    date: e.date?.slice(0, 10) || new Date().toISOString().slice(0, 10),
+    payer: e.payer,
+    splitA: e.splitA,
+    splitB: e.splitB,
+    splitPreset: "Custom",
+  });
+
+  const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const handlePreset = (p) => {
+    setF("splitPreset", p.label);
+    if (p.a !== null) { setF("splitA", p.a); setF("splitB", p.b); }
+  };
+
+  const handleCustomSplit = (who, val) => {
+    const n = Math.min(100, Math.max(0, parseInt(val) || 0));
+    if (who === "A") { setF("splitA", n); setF("splitB", 100 - n); }
+    else { setF("splitB", n); setF("splitA", 100 - n); }
+  };
+
+  const save = () => {
+    if (!form.description.trim() || !form.amount || isNaN(parseFloat(form.amount))) return;
+    onEdit(e.id, {
+      ...e,
+      description: form.description.trim(),
+      amount: parseFloat(form.amount).toFixed(2),
+      category: form.category,
+      date: new Date(form.date).toISOString(),
+      payer: form.payer,
+      splitA: form.splitA,
+      splitB: form.splitB,
+    });
+    setExpanded(false);
+  };
+
   return (
-    <div style={styles.expRow}>
-      <div style={styles.expLeft}>
-        <span style={styles.expCat}>{e.category?.split(" ")[0] || "📦"}</span>
-        <div style={{ minWidth: 0 }}>
-          <p style={styles.expDesc}>{e.description || e.category}</p>
-          <p style={styles.expMeta}>{USERS[e.payer]} paid · {e.splitA}%/{e.splitB}% · {new Date(e.date).toLocaleDateString("en-IN")}</p>
+    <div style={{ ...styles.expRow, flexDirection: "column", padding: 0, alignItems: "stretch", overflow: "hidden" }}>
+      {/* Collapsed row */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px" }}>
+        <div style={styles.expLeft}>
+          <span style={styles.expCat}>{e.category?.split(" ")[0] || "📦"}</span>
+          <div style={{ minWidth: 0 }}>
+            <p style={styles.expDesc}>{e.description || e.category}</p>
+            <p style={styles.expMeta}>{USERS[e.payer]} paid · {e.splitA}%/{e.splitB}% · {new Date(e.date).toLocaleDateString("en-IN")}</p>
+          </div>
+        </div>
+        <div style={styles.expRight}>
+          <span style={styles.expAmt}>{fmt(e.amount)}</span>
+          {onEdit && (
+            <button style={styles.editToggleBtn} onClick={() => setExpanded(x => !x)}>
+              {expanded ? "✕" : "✏️"}
+            </button>
+          )}
+          {onDelete && <button style={styles.delBtn} onClick={() => onDelete(e.id)}>✕</button>}
         </div>
       </div>
-      <div style={styles.expRight}>
-        <span style={styles.expAmt}>{fmt(e.amount)}</span>
-        {onDelete && <button style={styles.delBtn} onClick={() => onDelete(e.id)}>✕</button>}
-      </div>
+
+      {/* Edit panel */}
+      {expanded && (
+        <div style={styles.editPanel}>
+          <div style={styles.editField}>
+            <label style={styles.editLabel}>Description</label>
+            <input style={styles.editInput} value={form.description}
+              onChange={e => setF("description", e.target.value)} placeholder="Merchant name" />
+          </div>
+
+          <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label style={styles.editLabel}>Amount (₹)</label>
+              <input style={styles.editInput} type="number" min="0" step="0.01"
+                value={form.amount} onChange={e => setF("amount", e.target.value)} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={styles.editLabel}>Date</label>
+              <input style={styles.editInput} type="date" value={form.date}
+                onChange={e => setF("date", e.target.value)} />
+            </div>
+          </div>
+
+          <div style={styles.editField}>
+            <label style={styles.editLabel}>Category</label>
+            <div style={styles.editCatGrid}>
+              {CATEGORIES.map(cat => (
+                <button key={cat}
+                  style={{ ...styles.editCatBtn, ...(form.category === cat ? styles.editCatBtnActive : {}) }}
+                  onClick={() => setF("category", cat)}>
+                  {cat.split(" ")[0]} <span style={{ fontSize: 10, marginLeft: 2 }}>{cat.split(" ").slice(1).join(" ")}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={styles.editField}>
+            <label style={styles.editLabel}>Paid by</label>
+            <div style={styles.payerRow}>
+              {Object.entries(USERS).map(([key, name]) => (
+                <button key={key}
+                  style={{ ...styles.payerBtn, ...(form.payer === key ? styles.payerBtnActive : {}), padding: "8px 12px", fontSize: 13 }}
+                  onClick={() => setF("payer", key)}>
+                  <span style={{ ...styles.payerAvatar, width: 22, height: 22, fontSize: 11 }}>{name[0]}</span> {name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={styles.editField}>
+            <label style={styles.editLabel}>Split Ratio</label>
+            <div style={styles.editCatGrid}>
+              {SPLIT_PRESETS.filter(p => p.a !== null).map(p => {
+                const active = form.splitA === p.a && form.splitB === p.b;
+                return (
+                  <button key={p.label}
+                    style={{ ...styles.editCatBtn, ...(active ? styles.editCatBtnActive : {}) }}
+                    onClick={() => handlePreset(p)}>
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+              <div style={{ flex: 1, textAlign: "center" }}>
+                <label style={styles.editLabel}>{USERS.A} %</label>
+                <input style={styles.editSplitInput} type="number" min="0" max="100"
+                  value={form.splitA}
+                  onChange={e => handleCustomSplit("A", e.target.value)} />
+              </div>
+              <span style={{ fontFamily: "'Georgia', serif", fontSize: 18, color: C.muted, marginTop: 16 }}>/</span>
+              <div style={{ flex: 1, textAlign: "center" }}>
+                <label style={styles.editLabel}>{USERS.B} %</label>
+                <input style={styles.editSplitInput} type="number" min="0" max="100"
+                  value={form.splitB}
+                  onChange={e => handleCustomSplit("B", e.target.value)} />
+              </div>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <div style={styles.splitBar}>
+                <div style={{ ...styles.splitBarA, width: `${form.splitA}%` }} />
+                <div style={{ ...styles.splitBarB, width: `${form.splitB}%` }} />
+              </div>
+              <div style={styles.splitLabels}>
+                <span>{fmt(parseFloat(form.amount || 0) * form.splitA / 100)}</span>
+                <span>{fmt(parseFloat(form.amount || 0) * form.splitB / 100)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button style={{ ...styles.editDoneBtn, flex: 1 }} onClick={save}>Save changes ✓</button>
+            <button style={{ ...styles.cancelBtn, flex: 0, padding: "9px 16px", marginTop: 0, borderRadius: 10, fontSize: 13 }}
+              onClick={() => setExpanded(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -801,7 +949,7 @@ Return ONLY a valid JSON array. No markdown, no backticks, no explanation. If no
 }
 
 // ─── History ──────────────────────────────────────────────────────────────────
-function History({ expenses, onDelete }) {
+function History({ expenses, onDelete, onEdit }) {
   const [filter, setFilter] = useState("All");
   const [monthFilter, setMonthFilter] = useState("All");
 
@@ -844,7 +992,7 @@ function History({ expenses, onDelete }) {
 
       {filtered.length === 0
         ? <div style={styles.empty}><p style={styles.emptyText}>No expenses match these filters.</p></div>
-        : [...filtered].reverse().map(e => <ExpenseRow key={e.id} expense={e} onDelete={onDelete} />)
+        : [...filtered].reverse().map(e => <ExpenseRow key={e.id} expense={e} onDelete={onDelete} onEdit={onEdit} />)
       }
     </div>
   );
