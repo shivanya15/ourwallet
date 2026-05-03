@@ -695,6 +695,15 @@ Return ONLY a valid JSON array. No markdown, no backticks, no explanation. If no
                     />
                   </div>
                   <div style={styles.editField}>
+                    <label style={styles.editLabel}>Date</label>
+                    <input
+                      style={styles.editInput}
+                      type="date"
+                      value={item.date}
+                      onChange={e => updateItem(i, "date", e.target.value)}
+                    />
+                  </div>
+                  <div style={styles.editField}>
                     <label style={styles.editLabel}>Category</label>
                     <div style={styles.editCatGrid}>
                       {CATEGORIES.map(cat => (
