@@ -35,15 +35,23 @@ function monthLabel(key) {
 }
 
 function calcOwed(expenses) {
-  let paidA = 0, paidB = 0, owesA = 0, owesB = 0;
+  let paidA = 0, paidB = 0, owesA = 0, owesB = 0, settledAtoB = 0, settledBtoA = 0;
   expenses.forEach((e) => {
+    if (e.type === "settlement") {
+      // A paid B means A reduced what B owes them
+      if (e.payer === "A") settledAtoB += parseFloat(e.amount);
+      else settledBtoA += parseFloat(e.amount);
+      return;
+    }
     const amt = parseFloat(e.amount);
     const shareA = (e.splitA / 100) * amt;
     const shareB = (e.splitB / 100) * amt;
     if (e.payer === "A") { paidA += amt; owesA += shareA; owesB += shareB; }
     else { paidB += amt; owesA += shareA; owesB += shareB; }
   });
-  return { netA: paidA - owesA, paidA, paidB, owesA, owesB };
+  // netA positive = B owes A. Settlements reduce this.
+  const netA = (paidA - owesA) - settledAtoB + settledBtoA;
+  return { netA, paidA, paidB, owesA, owesB, settledAtoB, settledBtoA };
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
@@ -104,11 +112,12 @@ export default function App() {
       {tab === "dashboard" && <Dashboard expenses={expenses} setTab={setTab} />}
       {tab === "add" && <AddExpense expenses={expenses} onSave={saveExpenses} currentUser={currentUser} onDone={() => setTab("dashboard")} />}
       {tab === "import" && <ImportPDF expenses={expenses} onSave={saveExpenses} currentUser={currentUser} onDone={() => setTab("dashboard")} />}
-      {tab === "history" && <History expenses={expenses} 
+      {tab === "history" && <History expenses={expenses}
         onDelete={(id) => saveExpenses(expenses.filter(e => e.id !== id))}
         onEdit={(id, updated) => saveExpenses(expenses.map(e => e.id === id ? updated : e))}
       />}
       {tab === "summary" && <Summary expenses={expenses} />}
+      {tab === "settle" && <Settlements expenses={expenses} onSave={saveExpenses} currentUser={currentUser} />}
       {tab === "export" && <ExportExcel expenses={expenses} />}
     </Shell>
   );
@@ -157,6 +166,7 @@ function Shell({ children, user, onLogout, tab, setTab, saveStatus }) {
     { id: "import", icon: "⬆", label: "Import" },
     { id: "history", icon: "≡", label: "History" },
     { id: "summary", icon: "⇄", label: "Owes" },
+    { id: "settle", icon: "✓", label: "Settle" },
     { id: "export", icon: "↓", label: "Export" },
   ];
   return (
@@ -189,21 +199,16 @@ function Shell({ children, user, onLogout, tab, setTab, saveStatus }) {
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 function Dashboard({ expenses, setTab }) {
-  const { netA, paidA, paidB } = calcOwed(expenses);
-  const total = expenses.reduce((s, e) => s + parseFloat(e.amount), 0);
+  const months = ["All", ...new Set(expenses.map(e => monthKey(e.date)).sort().reverse())];
+  const [selectedMonth, setSelectedMonth] = useState("All");
 
-  // Monthly breakdown
-  const byMonth = {};
-  expenses.forEach(e => {
-    const k = monthKey(e.date);
-    if (!byMonth[k]) byMonth[k] = 0;
-    byMonth[k] += parseFloat(e.amount);
-  });
-  const monthEntries = Object.entries(byMonth).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 4);
+  const filtered = selectedMonth === "All" ? expenses : expenses.filter(e => monthKey(e.date) === selectedMonth);
 
-  // Top categories
+  const { netA, paidA, paidB } = calcOwed(filtered);
+  const total = filtered.reduce((s, e) => s + parseFloat(e.amount), 0);
+
   const byCat = {};
-  expenses.slice(-30).forEach(e => {
+  filtered.forEach(e => {
     byCat[e.category] = (byCat[e.category] || 0) + parseFloat(e.amount);
   });
   const topCats = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 4);
@@ -217,8 +222,25 @@ function Dashboard({ expenses, setTab }) {
 
   return (
     <div style={styles.page}>
+      {/* Month selector */}
+      {months.length > 1 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={styles.filterRow}>
+            {months.map(m => (
+              <button key={m}
+                style={{ ...styles.filterBtn, ...(selectedMonth === m ? styles.filterBtnActive : {}) }}
+                onClick={() => setSelectedMonth(m)}>
+                {m === "All" ? "All time" : monthLabel(m)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={styles.balanceCard}>
-        <p style={styles.balanceLabel}>Total Shared Spending</p>
+        <p style={styles.balanceLabel}>
+          {selectedMonth === "All" ? "Total Shared Spending" : monthLabel(selectedMonth)}
+        </p>
         <p style={styles.balanceAmount}>{fmt(total)}</p>
         <div style={{ ...styles.owedBadge, color: owed.color }}>{owed.text}</div>
       </div>
@@ -233,32 +255,6 @@ function Dashboard({ expenses, setTab }) {
           <p style={styles.statVal}>{fmt(paidB)}</p>
         </div>
       </div>
-
-      {monthEntries.length > 0 && (
-        <div style={styles.section}>
-          <p style={styles.sectionTitle}>By Month</p>
-          {monthEntries.map(([k, amt]) => {
-            const monthExp = expenses.filter(e => monthKey(e.date) === k);
-            const { netA: mNet } = calcOwed(monthExp);
-            return (
-              <div key={k} style={styles.monthRow}>
-                <div>
-                  <p style={styles.monthName}>{monthLabel(k)}</p>
-                  <p style={styles.monthSub}>{monthExp.length} expense{monthExp.length !== 1 ? "s" : ""}</p>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <p style={styles.monthAmt}>{fmt(amt)}</p>
-                  {Math.abs(mNet) > 0.01 && (
-                    <p style={{ ...styles.monthSub, color: C.terra }}>
-                      {mNet > 0 ? `${USERS.B} owes ${fmt(mNet)}` : `${USERS.A} owes ${fmt(Math.abs(mNet))}`}
-                    </p>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       {topCats.length > 0 && (
         <div style={styles.section}>
@@ -275,17 +271,17 @@ function Dashboard({ expenses, setTab }) {
         </div>
       )}
 
-      {expenses.length === 0 && (
+      {filtered.length === 0 && (
         <div style={styles.empty}>
           <p style={styles.emptyIcon}>🧾</p>
           <p style={styles.emptyText}>No expenses yet.<br />Add your first one!</p>
         </div>
       )}
 
-      {expenses.length > 0 && (
+      {filtered.length > 0 && (
         <div style={styles.section}>
           <p style={styles.sectionTitle}>Recent</p>
-          {[...expenses].reverse().slice(0, 5).map(e => <ExpenseRow key={e.id} expense={e} />)}
+          {[...filtered].reverse().slice(0, 5).map(e => <ExpenseRow key={e.id} expense={e} />)}
         </div>
       )}
     </div>
@@ -856,14 +852,25 @@ Return ONLY a valid JSON array. No markdown, no backticks, no explanation. If no
                       placeholder="Merchant name"
                     />
                   </div>
-                  <div style={styles.editField}>
-                    <label style={styles.editLabel}>Date</label>
-                    <input
-                      style={styles.editInput}
-                      type="date"
-                      value={item.date}
-                      onChange={e => updateItem(i, "date", e.target.value)}
-                    />
+                  <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={styles.editLabel}>Amount (₹)</label>
+                      <input
+                        style={styles.editInput}
+                        type="number" min="0" step="0.01"
+                        value={item.amount}
+                        onChange={e => updateItem(i, "amount", e.target.value)}
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={styles.editLabel}>Date</label>
+                      <input
+                        style={styles.editInput}
+                        type="date"
+                        value={item.date}
+                        onChange={e => updateItem(i, "date", e.target.value)}
+                      />
+                    </div>
                   </div>
                   <div style={styles.editField}>
                     <label style={styles.editLabel}>Category</label>
@@ -1103,6 +1110,148 @@ function Summary({ expenses }) {
   );
 }
 
+// ─── Settlements ──────────────────────────────────────────────────────────────
+function Settlements({ expenses, onSave, currentUser }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [amount, setAmount] = useState("");
+  const [payer, setPayer] = useState(currentUser);
+  const [date, setDate] = useState(today);
+  const [note, setNote] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
+
+  const { netA } = calcOwed(expenses);
+  const settlements = expenses.filter(e => e.type === "settlement").sort((a, b) => b.date.localeCompare(a.date));
+
+  const submit = () => {
+    if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+      setErr("Enter a valid amount"); return;
+    }
+    const newSettlement = {
+      id: Date.now().toString(),
+      type: "settlement",
+      amount: parseFloat(amount).toFixed(2),
+      payer,
+      receiver: payer === "A" ? "B" : "A",
+      date: new Date(date).toISOString(),
+      description: note.trim() || `${USERS[payer]} paid ${USERS[payer === "A" ? "B" : "A"]}`,
+      splitA: 0, splitB: 0, // not applicable for settlements
+      category: "💸 Settlement",
+    };
+    onSave([...expenses, newSettlement]);
+    setAmount(""); setNote(""); setErr(""); setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const deleteSettlement = (id) => onSave(expenses.filter(e => e.id !== id));
+
+  const verdictText = () => {
+    if (Math.abs(netA) < 0.01) return { text: "All settled up! 🎉", color: C.sage };
+    if (netA > 0) return { text: `${USERS.B} owes ${USERS.A} ${fmt(netA)}`, color: C.terra };
+    return { text: `${USERS.A} owes ${USERS.B} ${fmt(Math.abs(netA))}`, color: C.terra };
+  };
+  const verdict = verdictText();
+
+  return (
+    <div style={styles.page}>
+      <h2 style={styles.pageTitle}>Record Settlement</h2>
+
+      {/* Current balance */}
+      <div style={{ ...styles.verdictCard, marginBottom: 20 }}>
+        <p style={styles.verdictEmoji}>{Math.abs(netA) < 0.01 ? "🎉" : "💸"}</p>
+        <p style={styles.verdictText}>Current Balance</p>
+        <p style={{ ...styles.verdictSub, fontSize: 16, fontWeight: 700, color: verdict.color, background: "rgba(255,255,255,0.15)", borderRadius: 12, padding: "6px 14px", display: "inline-block", marginTop: 6 }}>
+          {verdict.text}
+        </p>
+      </div>
+
+      {/* Settlement form */}
+      <div style={{ background: C.warm, border: `1px solid ${C.border}`, borderRadius: 14, padding: 16, marginBottom: 20 }}>
+        <p style={{ ...styles.sectionTitle, marginBottom: 14 }}>Log a payment</p>
+
+        <div style={styles.formGroup}>
+          <label style={styles.label}>Who paid?</label>
+          <div style={styles.payerRow}>
+            {Object.entries(USERS).map(([key, name]) => (
+              <button key={key}
+                style={{ ...styles.payerBtn, ...(payer === key ? styles.payerBtnActive : {}) }}
+                onClick={() => setPayer(key)}>
+                <span style={styles.payerAvatar}>{name[0]}</span> {name}
+              </button>
+            ))}
+          </div>
+          {payer && (
+            <p style={{ fontFamily: "system-ui", fontSize: 12, color: C.muted, marginTop: 8 }}>
+              {USERS[payer]} paid {USERS[payer === "A" ? "B" : "A"]} to settle the balance
+            </p>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+          <div style={{ flex: 1 }}>
+            <label style={styles.label}>Amount (₹)</label>
+            <div style={styles.amountWrap}>
+              <span style={styles.currency}>₹</span>
+              <input style={{ ...styles.input, ...styles.amountInput, ...(err ? styles.inputErr : {}) }}
+                type="number" min="0" step="0.01" placeholder="0.00"
+                value={amount} onChange={e => { setAmount(e.target.value); setErr(""); }} />
+            </div>
+            {err && <p style={styles.err}>{err}</p>}
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={styles.label}>Date</label>
+            <input style={styles.input} type="date" value={date} max={today}
+              onChange={e => setDate(e.target.value)} />
+          </div>
+        </div>
+
+        {/* Quick fill suggestion */}
+        {Math.abs(netA) > 0.01 && (
+          <button style={{ ...styles.presetChip, marginBottom: 12, background: C.card, borderColor: C.terra, color: C.terra }}
+            onClick={() => setAmount(Math.abs(netA).toFixed(2))}>
+            Fill full amount: {fmt(Math.abs(netA))}
+          </button>
+        )}
+
+        <div style={styles.formGroup}>
+          <label style={styles.label}>Note (optional)</label>
+          <input style={styles.input} placeholder="e.g. GPay transfer, cash"
+            value={note} onChange={e => setNote(e.target.value)} />
+        </div>
+
+        <button style={{ ...styles.submitBtn, background: saved ? C.sage : C.terra }}
+          onClick={submit}>
+          {saved ? "✓ Recorded!" : "Record Settlement"}
+        </button>
+      </div>
+
+      {/* Settlement history */}
+      {settlements.length > 0 && (
+        <div style={styles.section}>
+          <p style={styles.sectionTitle}>Settlement History</p>
+          {settlements.map(s => (
+            <div key={s.id} style={styles.expRow}>
+              <div style={styles.expLeft}>
+                <span style={styles.expCat}>💸</span>
+                <div style={{ minWidth: 0 }}>
+                  <p style={styles.expDesc}>{s.description}</p>
+                  <p style={styles.expMeta}>
+                    {USERS[s.payer]} → {USERS[s.receiver]} · {new Date(s.date).toLocaleDateString("en-IN")}
+                  </p>
+                </div>
+              </div>
+              <div style={styles.expRight}>
+                <span style={{ ...styles.expAmt, color: C.sage }}>{fmt(s.amount)}</span>
+                <button style={styles.delBtn} onClick={() => deleteSettlement(s.id)}>✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Export Excel ─────────────────────────────────────────────────────────────
 function ExportExcel({ expenses }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -1116,6 +1265,7 @@ function ExportExcel({ expenses }) {
   const [done, setDone] = useState(false);
 
   const filtered = expenses.filter(e => {
+    if (e.type === "settlement") return false;
     const d = e.date.slice(0, 10);
     return d >= from && d <= to;
   });
